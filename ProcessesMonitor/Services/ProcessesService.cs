@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR;
 using System.Diagnostics;
 using ProcessesMonitor.Models;
 
@@ -28,9 +28,9 @@ public class ProcessesService : IProcessesService
         _processorCount = Convert.ToDouble(Environment.ProcessorCount);
 
         _processViewModels = new Dictionary<int, ProcessEntity>();
-        var processes = Process.GetProcesses();
+        Process[] processes = Process.GetProcesses();
 
-        foreach (var process in processes)
+        foreach (Process process in processes)
         {
             try
             {
@@ -55,14 +55,14 @@ public class ProcessesService : IProcessesService
     {
         var processes = Process.GetProcesses().ToHashSet();
         
-        foreach (var processViewModel in _processViewModels)
+        foreach (KeyValuePair<int, ProcessEntity> processViewModel in _processViewModels)
         {
             processViewModel.Value.IsActive = false;
         }
 
         await Task.Delay(2000);
         
-        foreach (var process in processes)
+        foreach (Process process in processes)
         {
             try
             {
@@ -74,9 +74,9 @@ public class ProcessesService : IProcessesService
             }
         }
 
-        await CheckHigLoading();
+        await CheckHigLoadingAsync();
 
-        var processesToDelete = _processViewModels
+        IEnumerable<int> processesToDelete = _processViewModels
             .Where(it => !it.Value.IsActive)
             .Select(it => it.Key);
 
@@ -116,7 +116,7 @@ public class ProcessesService : IProcessesService
         }
     }
 
-    private async Task CheckHigLoading()
+    private async Task CheckHigLoadingAsync()
     {
         var totalCpuUsagePercentage = _processViewModels.Values.Sum(it => it.CpuUsage);
         var totalMemoryUsage = _processViewModels.Values.Sum(it => it.MemoryUsage);

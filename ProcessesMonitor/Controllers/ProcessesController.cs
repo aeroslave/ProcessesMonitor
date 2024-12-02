@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using ProcessesMonitor.Services;
 using ProcessesMonitor.ViewModels;
 using System.ComponentModel;
@@ -11,9 +11,9 @@ public class ProcessesController : ControllerBase
 {
     [Description("Method to get all processes")]
     [HttpGet(Name = "GetAllProcesses")]
-    public IReadOnlyCollection<ProcessViewModel> GetAllProcessesAsync()
+    public IReadOnlyCollection<ProcessViewModel> GetAllProcesses()
     {
-        var processesService = HttpContext.RequestServices.GetRequiredService<IProcessesService>();
+        IProcessesService processesService = HttpContext.RequestServices.GetRequiredService<IProcessesService>();
 
         return processesService.Processes
             .Select(ProcessViewModel.FromEntity)
