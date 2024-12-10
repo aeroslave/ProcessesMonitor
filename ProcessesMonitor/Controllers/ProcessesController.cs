@@ -11,12 +11,12 @@ public class ProcessesController : ControllerBase
 {
     [Description("Method to get all processes")]
     [HttpGet(Name = "GetAllProcesses")]
-    public IReadOnlyCollection<ProcessViewModel> GetAllProcesses()
+    public async Task<IReadOnlyCollection<ProcessViewModel>> GetAllProcessesAsync()
     {
         IProcessesService processesService = HttpContext.RequestServices.GetRequiredService<IProcessesService>();
-
-        return processesService.Processes
+        
+        return await Task.FromResult(processesService.Processes
             .Select(ProcessViewModel.FromEntity)
-            .OrderByDescending(it => it.CpuUsage).ToList();
+            .OrderByDescending(it => it.CpuUsage).ToList());
     }
 }

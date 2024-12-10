@@ -1,40 +1,44 @@
-using Microsoft.AspNetCore.SignalR;
+using System.ComponentModel;
 using System.Diagnostics;
+using Microsoft.AspNetCore.SignalR;
 using ProcessesMonitor.Models;
 
 namespace ProcessesMonitor.Services;
 
 public class ProcessesService : IProcessesService
 {
-    private readonly IHubContext<HighLoadWarningHub> _hubContext;
-    private const long MbDivider = 1048576;
-    private readonly Dictionary<int, ProcessEntity> _processViewModels;
-
-    private const string ReceiveMemoryHighLoadMethodName = "ReceiveMemoryHighLoad";
+    private const string ReceiveMemoryHighLoad = "ReceiveMemoryHighLoad";
     private const string ReceiveCpuHighLoad = "ReceiveCpuHighLoad";
+    private const long MbDivider = 1048576;
 
+    private readonly IHubContext<HighLoadWarningHub> _hubContext;
+    private readonly ILogger<ProcessesService> _logger;
+    private readonly Dictionary<int, ProcessEntity> _processDictionary;
+    
     private readonly long _totalAvailableMemory;
     private readonly double _processorCount;
     private bool _isHighLoadCpu;
     private bool _isHighLoadMemory;
 
-    public IReadOnlyCollection<ProcessEntity> Processes => _processViewModels.Values;
+    public IReadOnlyCollection<ProcessEntity> Processes => _processDictionary.AsReadOnly().Values;
 
-    public ProcessesService(IHubContext<HighLoadWarningHub> hubContext)
+    public ProcessesService(IHubContext<HighLoadWarningHub> hubContext, ILogger<ProcessesService> logger)
     {
         _hubContext = hubContext;
+        _logger = logger;
 
         _totalAvailableMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / MbDivider;
         _processorCount = Convert.ToDouble(Environment.ProcessorCount);
 
-        _processViewModels = new Dictionary<int, ProcessEntity>();
-        Process[] processes = Process.GetProcesses();
+        _processDictionary = new Dictionary<int, ProcessEntity>();
 
+        Process[] processes = Process.GetProcesses();
+        
         foreach (Process process in processes)
         {
             try
             {
-                var processVm = new ProcessEntity(process.Id, process.ProcessName)
+                ProcessEntity processVm = new(process.Id, process.ProcessName)
                 {
                     MemoryUsage = process.WorkingSet64 / MbDivider,
                     OldTotalProcessorTime = process.TotalProcessorTime.TotalMilliseconds,
@@ -42,25 +46,29 @@ public class ProcessesService : IProcessesService
                     IsActive = true
                 };
 
-                _processViewModels.Add(process.Id, processVm);
+                _processDictionary.Add(process.Id, processVm);
             }
-            catch (Exception _)
+            catch (Win32Exception _)
             {
                 // ignored
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception.Message);
             }
         }
     }
 
     public async Task UpdateProcessesAsync()
     {
-        var processes = Process.GetProcesses().ToHashSet();
-        
-        foreach (KeyValuePair<int, ProcessEntity> processViewModel in _processViewModels)
+        Process[] processes = Process.GetProcesses();
+
+        foreach (var processViewModel in _processDictionary)
         {
             processViewModel.Value.IsActive = false;
         }
 
-        await Task.Delay(2000);
+        await Task.Delay(1000);
         
         foreach (Process process in processes)
         {
@@ -68,32 +76,31 @@ public class ProcessesService : IProcessesService
             {
                 UpdateProcessesData(process);
             }
-            catch (Exception _)
+            catch (Win32Exception _)
             {
                 // ignored
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception.Message);
             }
         }
 
         await CheckHigLoadingAsync();
 
-        IEnumerable<int> processesToDelete = _processViewModels
+        IEnumerable<int> processesToDelete = _processDictionary
             .Where(it => !it.Value.IsActive)
             .Select(it => it.Key);
 
         foreach (var processId in processesToDelete)
         {
-            _processViewModels.Remove(processId);
-        }
-
-        foreach (var process in processes)
-        {
-            process.Refresh();
+            _processDictionary.Remove(processId);
         }
     }
 
     private void UpdateProcessesData(Process process)
     {
-        if (_processViewModels.TryGetValue(process.Id, out var processViewModel))
+        if (_processDictionary.TryGetValue(process.Id, out var processViewModel))
         {
             processViewModel.MemoryUsage = process.WorkingSet64 / MbDivider;
             var timeDelta = DateTime.Now.Subtract(processViewModel.LastTime).TotalMilliseconds;
@@ -106,7 +113,7 @@ public class ProcessesService : IProcessesService
         }
         else
         {
-            _processViewModels.Add(process.Id, new ProcessEntity(process.Id, process.ProcessName)
+            _processDictionary.Add(process.Id, new ProcessEntity(process.Id, process.ProcessName)
             {
                 MemoryUsage = process.WorkingSet64 / MbDivider,
                 OldTotalProcessorTime = process.TotalProcessorTime.TotalMilliseconds,
@@ -118,8 +125,8 @@ public class ProcessesService : IProcessesService
 
     private async Task CheckHigLoadingAsync()
     {
-        var totalCpuUsagePercentage = _processViewModels.Values.Sum(it => it.CpuUsage);
-        var totalMemoryUsage = _processViewModels.Values.Sum(it => it.MemoryUsage);
+        var totalCpuUsagePercentage = _processDictionary.Values.Sum(it => it.CpuUsage);
+        var totalMemoryUsage = _processDictionary.Values.Sum(it => it.MemoryUsage);
         
         if (totalCpuUsagePercentage > 80)
         {
@@ -127,12 +134,14 @@ public class ProcessesService : IProcessesService
             {
                 _isHighLoadCpu = true;
                 await _hubContext.Clients.All.SendAsync(ReceiveCpuHighLoad, _isHighLoadCpu);
+                _logger.LogWarning("Warning! CPU usage has exceeded 80%");
             }
         }
         else if (_isHighLoadCpu)
         {
             _isHighLoadCpu = false;
             await _hubContext.Clients.All.SendAsync(ReceiveCpuHighLoad, _isHighLoadCpu);
+            _logger.LogInformation("CPU usage is less than 80%");
         }
         
         if (totalMemoryUsage/_totalAvailableMemory > 0.8)
@@ -140,13 +149,15 @@ public class ProcessesService : IProcessesService
             if (!_isHighLoadMemory)
             {
                 _isHighLoadMemory = true;
-                await _hubContext.Clients.All.SendAsync(ReceiveMemoryHighLoadMethodName, _isHighLoadMemory);
+                await _hubContext.Clients.All.SendAsync(ReceiveMemoryHighLoad, _isHighLoadMemory);
+                _logger.LogWarning("Warning! Available memory is running low!");
             }
         }
         else if (_isHighLoadMemory)
         {
             _isHighLoadMemory = false;
-            await _hubContext.Clients.All.SendAsync(ReceiveMemoryHighLoadMethodName, _isHighLoadMemory);
+            await _hubContext.Clients.All.SendAsync(ReceiveMemoryHighLoad, _isHighLoadMemory);
+            _logger.LogInformation("There is enough available memory!");
         }
     }
 }
