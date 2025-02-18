@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.AspNetCore.SignalR;
@@ -11,21 +12,19 @@ public class ProcessesService(IHubContext<HighLoadWarningHub> hubContext,
     private const string ReceiveMemoryHighLoad = "ReceiveMemoryHighLoad";
     private const string ReceiveCpuHighLoad = "ReceiveCpuHighLoad";
     private const long MbDivider = 1048576;
-
-    private readonly Dictionary<int, ProcessEntity> _processDictionary = [];
-
+    
     private readonly long _totalAvailableMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / MbDivider;
     private readonly double _processorCount = Convert.ToDouble(Environment.ProcessorCount);
     private bool _isHighLoadCpu;
     private bool _isHighLoadMemory;
-
-    public IReadOnlyCollection<ProcessEntity> Processes => _processDictionary.AsReadOnly().Values;
-
+    
+    public ConcurrentDictionary<int, ProcessEntity> ProcessDictionary { get; } = [];
+    
     public async Task UpdateProcessesAsync()
     {
         Process[] processes = Process.GetProcesses();
 
-        foreach (var processViewModel in _processDictionary)
+        foreach (var processViewModel in ProcessDictionary)
         {
             processViewModel.Value.IsActive = false;
         }
@@ -50,19 +49,17 @@ public class ProcessesService(IHubContext<HighLoadWarningHub> hubContext,
 
         await CheckHigLoadingAsync();
 
-        IEnumerable<int> processesToDelete = _processDictionary
-            .Where(it => !it.Value.IsActive)
-            .Select(it => it.Key);
+        IEnumerable<KeyValuePair<int, ProcessEntity>> processesToDelete = ProcessDictionary.Where(it => !it.Value.IsActive);
 
         foreach (var processId in processesToDelete)
         {
-            _processDictionary.Remove(processId);
+            ProcessDictionary.TryRemove(processId);
         }
     }
 
     private void UpdateProcessesData(Process process)
     {
-        if (_processDictionary.TryGetValue(process.Id, out var processViewModel))
+        if (ProcessDictionary.TryGetValue(process.Id, out var processViewModel))
         {
             processViewModel.MemoryUsage = process.WorkingSet64 / MbDivider;
             var timeDelta = DateTime.Now.Subtract(processViewModel.LastTime).TotalMilliseconds;
@@ -75,7 +72,7 @@ public class ProcessesService(IHubContext<HighLoadWarningHub> hubContext,
         }
         else
         {
-            _processDictionary.Add(process.Id, new ProcessEntity(process.Id, process.ProcessName)
+            ProcessDictionary.TryAdd(process.Id, new ProcessEntity(process.Id, process.ProcessName)
             {
                 MemoryUsage = process.WorkingSet64 / MbDivider,
                 OldTotalProcessorTime = process.TotalProcessorTime.TotalMilliseconds,
@@ -87,8 +84,8 @@ public class ProcessesService(IHubContext<HighLoadWarningHub> hubContext,
 
     private async Task CheckHigLoadingAsync()
     {
-        var totalCpuUsagePercentage = _processDictionary.Values.Sum(it => it.CpuUsage);
-        var totalMemoryUsage = _processDictionary.Values.Sum(it => it.MemoryUsage);
+        var totalCpuUsagePercentage = ProcessDictionary.Values.Sum(it => it.CpuUsage);
+        var totalMemoryUsage = ProcessDictionary.Values.Sum(it => it.MemoryUsage);
         
         if (totalCpuUsagePercentage > 80)
         {

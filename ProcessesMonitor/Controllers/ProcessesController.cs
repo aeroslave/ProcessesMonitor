@@ -15,8 +15,8 @@ public class ProcessesController : ControllerBase
     {
         IProcessesService processesService = HttpContext.RequestServices.GetRequiredService<IProcessesService>();
         
-        return await Task.FromResult(processesService.Processes
-            .Select(ProcessViewModel.FromEntity)
+        return await Task.FromResult(processesService.ProcessDictionary
+            .Select(it => ProcessViewModel.FromEntity(it.Value))
             .OrderByDescending(it => it.CpuUsage).ToList());
     }
 }

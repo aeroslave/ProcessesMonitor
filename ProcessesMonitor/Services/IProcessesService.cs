@@ -1,9 +1,10 @@
-﻿using ProcessesMonitor.Models;
+using System.Collections.Concurrent;
+using ProcessesMonitor.Models;
 
 namespace ProcessesMonitor.Services;
 
 public interface IProcessesService
 {
-    public IReadOnlyCollection<ProcessEntity> Processes { get; }
+    public ConcurrentDictionary<int, ProcessEntity> ProcessDictionary { get; }
     public Task UpdateProcessesAsync();
 }
